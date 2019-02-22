@@ -1,1 +1,3 @@
-# IBI_VizConf
+# IBI Editor Conferencing Interface
+
+This program is designed to allow users to simultaneously plot, and evaluate IBI files that have been edited by different editors. I created the program to help our editing team quickly review reliability cases and work through sections where two or more editors saw the same section differently. This is very much beta and incomplete software that will be added to in the coming weeks/months. Use at your own risk. 
