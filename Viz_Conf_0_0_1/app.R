@@ -1,3 +1,38 @@
+#===================================================================================================
+# This is the Shiny application IBI Editor Conferencing Interface - Matthew G. Barstead (c) 2019. 
+# You can run the application by clicking the 'Run App' button above.
+#===================================================================================================
+# By running this application you agree to the terms outlined below:
+# 
+# MIT License
+#
+# Copyright (c) 2019 Matthew G. Barstead
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#===================================================================================================
+# Details about the processing steps are detailed at the link below: 
+# https://github.com/matgbar/IBI_VizConf
+#
+# General questions? Contact the developer Matthew G. Barstead 
+# Contact: mbarstead@gmail.com
+#===================================================================================================
+
 if(!require('pacman')) install.packages('pacman')
 pacman::p_unload(pacman::p_loaded(), character.only=TRUE)
 pacman::p_load(shiny, 
@@ -8,18 +43,17 @@ pacman::p_load(shiny,
                zoo,
                forecast,
                psych,
-               rtf, 
                shinyBS, 
                tseries, 
-               rstan,
-               rstanarm,
-               bayesplot,
-               MCMCvis, 
                astsa, 
                parallel,
                benchmarkme,
                doParallel,
-               imputeTS)
+               imputeTS, 
+               seewave, 
+               psd, 
+               cowplot, 
+               gridExtra)
 
 # Define UI for application that draws a histogram
 ui <- shinyUI(
@@ -78,7 +112,7 @@ ui <- shinyUI(
                                                   label = 'Select Target IBI range',
                                                   min = .25, 
                                                   max = 1.5,
-                                                  value = c(.25, .75),
+                                                  value = c(.25, 1.25),
                                                   post = 'IBI'),
                                       checkboxGroupInput('editorSelect1', 
                                                          label = 'Select Editors to Display')
@@ -91,10 +125,36 @@ ui <- shinyUI(
                                    )
                        )
               ),
-              tabPanel("Filtered & Processed IBI",
+              tabPanel("Filtered & Spectral IBI",
                        sidebarLayout(
-                         sidebarPanel(), 
-                         mainPanel()
+                         sidebarPanel(actionButton(inputId = "refresh2", 
+                                                   label = 'Update Plot', 
+                                                   style = "background-color: #48f442; border-color: #FFD520"), 
+                                      sliderInput(inputId = 'yLim2',
+                                                  label = 'Adjust y-axis',
+                                                  min = -.25, 
+                                                  max = .25,
+                                                  value = c(-1, 1),
+                                                  post = 'IBI'),
+                                      checkboxGroupInput('editorSelect2', 
+                                                         label = 'Select Editors to Display'),
+                                      radioButtons(inputId = 'plotSelect',
+                                                   label = 'Choose Information to Display', 
+                                                   choices = c('BW Bandpass', 
+                                                               'PSD & ln(HF-HRV)')), 
+                                      selectInput(inputId = 'pop', 
+                                                  label = 'Select Age Range:', 
+                                                  choices = c('Infant (0-2)', 
+                                                              'Child (3-6)', 
+                                                              'Adolescent (7-17)',
+                                                              'Adult (18+)'), 
+                                                  selected = "Child (3-6)")), 
+                         mainPanel(plotOutput(outputId = "HFHRV",
+                                              height = '600px'), 
+                                   plotOutput(outputId = 'IBIselect2', 
+                                              height = '150px', 
+                                              brush = brushOpts(id="select_range2", delay=1000))
+                         )
                        )
               )
             )
@@ -200,6 +260,10 @@ server <- function(input, output, session) {
                       HP, 
                       IBIs, 
                       Files)
+      updateCheckboxGroupInput(session, 
+                               inputId = "editorSelect2", 
+                               selected = Editors, 
+                               choices = Editors)
     }
     else{
       tab<-matrix('No data provided', nrow=1)
@@ -277,10 +341,213 @@ server <- function(input, output, session) {
       geom_line(data = DF, 
                 aes(x = Time, 
                     y = IBI))+
-      geom_point(color = 'red')
+      geom_point(data = DF, 
+                 aes(x = Time, 
+                     y = IBI),
+                 color = 'red')
 
     g1
   })
+  
+  #----------------------------------------------------------------------------
+  Editors2<-reactive({input$editorSelect2})
+  
+  observeEvent(input$editorSelect2,{
+    rv$editorSelect2<-input$editorSelect2
+  })
+  
+  HFHRV<-eventReactive(input$refresh2,{
+    #browser()
+    if(input$plotSelect=='BW Bandpass'){
+      g1<-ggplot()
+      rv$ymin2<-as.numeric(input$yLim2[1])
+      rv$ymax2<-as.numeric(input$yLim2[2])
+      if(length(rv$wd)>0 & 
+         length(rv$origFile)>0 & 
+         length(rv$ppgFile)>0 & 
+         length(rv$ibiFiles) > 0 & 
+         nrow(rv$tab)>0){
+        DF.multi<-data.frame()
+        for(i in 1:nrow(rv$tab)){
+          dat.temp<-read.table(paste0(rv$wd, '/', rv$tab$Files[i]), 
+                               header = TRUE, 
+                               stringsAsFactors = FALSE)
+          dat.temp$Editor<-rep(rv$tab$Editors[i])
+          DF.multi<-rbind(DF.multi, dat.temp)
+        }
+        
+        eds<-Editors2()
+        
+        DF.multi.temp<-data.frame()
+        for(i in 1:length(eds)){
+          DF.multi.temp<-rbind(DF.multi.temp, DF.multi[DF.multi$Editor == eds[i],])
+        }
+        
+        if(input$pop == 'Infant (0-2)'){
+          Hz_lb<-.3
+          Hz_ub<-1.3
+        }
+        else if(input$pop == 'Child (3-6)'){
+          Hz_lb<-.24
+          Hz_ub<-1.04
+        }
+        else if(input$pop == 'Adolescent (7-17)'){
+          Hz_lb<-.12
+          Hz_ub<-1
+        }
+        else{
+          Hz_lb<-.12
+          Hz_ub<-.4
+        }
+        
+        DF.filter<-data.frame()
+        for(i in 1:length(eds)){
+          dat.temp<-DF.multi.temp[DF.multi.temp$Editor == eds[i],]
+          DF.time<-data.frame(Time = seq(min(dat.temp$Time), max(dat.temp$Time), by=.001))
+          
+          DF.time<-merge(DF.time, dat.temp, by='Time', all=TRUE)
+          IBI_ts<-na.interpolation(DF.time$IBI, option='spline')
+          IBI_ts<-ts(IBI_ts, frequency = 1000)
+          IBI_filter<-bwfilter(IBI_ts, from = Hz_lb, to = Hz_ub, bandpass = TRUE, f=1000)
+          
+          DF.time<-data.frame(DF.time, 
+                              IBI_filter = IBI_filter[,1])
+          keep_rows<-seq(1, nrow(DF.time), by = 8)  #downsamples to 125 Hz (probably overkill)
+          DF.time<-DF.time[keep_rows,]
+          
+          DF.time<-DF.time[,-3:-4]
+          DF.time$Editor<-rep(eds[i])
+          
+          DF.filter<-rbind(DF.filter, DF.time)
+        }
+        
+        g1<-g1+
+          geom_line(data = DF.filter, 
+                    aes(x = Time, 
+                        y = IBI_filter, 
+                        group = Editor, 
+                        color = Editor), 
+                    size = 2)+
+          geom_point(data = DF.filter, 
+                     aes(x = Time, 
+                         y = IBI_filter, 
+                         color = Editor, 
+                         group = Editor), 
+                     size = 4)+
+          scale_y_continuous(limits = c(rv$ymin2, rv$ymax2))
+        if(!is.null(input$select_range2)){
+          g1<-g1+scale_x_continuous(limits = c(input$select_range2$xmin, input$select_range2$xmax))
+        } 
+      }
+    }
+    
+    ##
+    #Adding ability to view natural log of HF-HRV and psd by editor in respiration range
+    if(input$plotSelect=='PSD & ln(HF-HRV)'){
+      g1<-ggplot()
+      rv$ymin2<-as.numeric(input$yLim2[1])
+      rv$ymax2<-as.numeric(input$yLim2[2])
+      if(length(rv$wd)>0 & 
+         length(rv$origFile)>0 & 
+         length(rv$ppgFile)>0 & 
+         length(rv$ibiFiles) > 0 & 
+         nrow(rv$tab)>0){
+        DF.multi<-data.frame()
+        for(i in 1:nrow(rv$tab)){
+          dat.temp<-read.table(paste0(rv$wd, '/', rv$tab$Files[i]), 
+                               header = TRUE, 
+                               stringsAsFactors = FALSE)
+          dat.temp$Editor<-rep(rv$tab$Editors[i])
+          DF.multi<-rbind(DF.multi, dat.temp)
+        }
+        
+        eds<-Editors2()
+        
+        DF.multi.temp<-data.frame()
+        for(i in 1:length(eds)){
+          DF.multi.temp<-rbind(DF.multi.temp, DF.multi[DF.multi$Editor == eds[i],])
+        }
+        
+        if(input$pop == 'Infant (0-2)'){
+          Hz_lb<-.3
+          Hz_ub<-1.3
+        }
+        else if(input$pop == 'Child (3-6)'){
+          Hz_lb<-.24
+          Hz_ub<-1.04
+        }
+        else if(input$pop == 'Adolescent (7-17)'){
+          Hz_lb<-.12
+          Hz_ub<-1
+        }
+        else{
+          Hz_lb<-.12
+          Hz_ub<-.4
+        }
+        
+        DF.psd<-data.frame()
+        DF.pow<-data.frame()
+        for(i in 1:length(eds)){
+          dat.temp<-DF.multi.temp[DF.multi.temp$Editor == eds[i],]
+          DF.time<-data.frame(Time = seq(min(dat.temp$Time), max(dat.temp$Time), by=.001))
+          
+          DF.time<-merge(DF.time, dat.temp, by='Time', all=TRUE)
+          IBI_ts<-na.interpolation(DF.time$IBI, option='spline')
+          IBI_ts<-ts(IBI_ts, frequency = 1000)
+          IBI_filter<-bwfilter(IBI_ts, from = Hz_lb, to = Hz_ub, bandpass = TRUE, f=1000)
+          
+          temp<-mvspec(x=IBI_filter,
+                       spans = c(7,7),
+                       taper = .01)
+          
+          DF.temp<-data.frame(Spec = temp$spec[temp$freq>=Hz_lb/1000 & temp$freq<=Hz_ub/1000], 
+                              Freq = temp$freq[temp$freq>=Hz_lb/1000 & temp$freq<=Hz_ub/1000]*1000)
+          DF.temp$Editor<-rep(eds[i])
+          
+          DF.temp2<-data.frame(Editor = eds[i], 
+                               HF_HRV = log(sum(temp$spec[temp$freq>=Hz_lb/1000 & temp$freq<=Hz_ub/1000])))
+          DF.psd<-rbind(DF.psd, DF.temp)
+          DF.pow<-rbind(DF.pow, 
+                        DF.temp2)
+        }
+        
+        g1<-g1+
+          geom_line(data = DF.psd, 
+                    aes(x = Freq, 
+                        y = Spec, 
+                        group = Editor, 
+                        color = Editor), 
+                    size = 2)
+        tbl<-tableGrob(DF.pow)
+        
+        g1<-plot_grid(g1, 
+                      tbl, 
+                      ncol =2)
+      }
+    }
+    g1
+  })
+  
+  output$HFHRV<-renderPlot({
+    HFHRV()
+  })
+  
+  output$IBIselect2<-renderPlot({
+    #browser()
+    rv$origDF<-read.table(rv$origFile, header = TRUE, sep = '\t')
+    DF<-rv$origDF
+    g1<-ggplot()+
+      geom_line(data = DF, 
+                aes(x = Time, 
+                    y = IBI))+
+      geom_point(data = DF, 
+                 aes(x = Time, 
+                     y = IBI),
+                 color = 'red')
+    
+    g1
+  })
+  
   #############################################################################
   #Text display for File Name and Working Directory
   #############################################################################
