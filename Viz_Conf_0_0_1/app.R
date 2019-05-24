@@ -313,12 +313,12 @@ server <- function(input, output, session) {
                        aes(x = Time, 
                            y = IBI, 
                            group = Editor, 
-                           lty = Editor), 
-                  size = 2)+
+                           color = Editor), 
+                  size = 2, 
+                  alpha = .5)+
         geom_point(data = DF.multi.temp, 
                    aes(x = Time, 
                        y = IBI, 
-                       color = Vals, 
                        group = Editor), 
                    size = 4)+
         scale_y_continuous(limits = c(rv$ymin1, rv$ymax1))
@@ -337,6 +337,8 @@ server <- function(input, output, session) {
     #browser()
     rv$origDF<-read.table(rv$origFile, header = TRUE, sep = '\t')
     DF<-rv$origDF
+    DF_ppg<-read.table(rv$ppgFile, header = TRUE, sep = '\t')
+    DF_ppg$PPG<-DF_ppg$PPG-mean(DF_ppg$PPG)+mean(DF$IBI)
     g1<-ggplot()+
       geom_line(data = DF, 
                 aes(x = Time, 
@@ -344,7 +346,10 @@ server <- function(input, output, session) {
       geom_point(data = DF, 
                  aes(x = Time, 
                      y = IBI),
-                 color = 'red')
+                 color = 'red')+
+      geom_line(data = DF_ppg, 
+                aes(x=Time, 
+                    y=PPG))
 
     g1
   })
